@@ -3,9 +3,13 @@
 <head>
   <meta charset="utf-8">
   <title>FileBeam Client</title>
-
-  <!-- PeerJS CDN -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    progress { width: 300px; height: 20px; }
+    #status { margin-top: 10px; }
+  </style>
 </head>
 <body>
 
@@ -15,35 +19,81 @@
 <button id="join">Connect</button>
 
 <div id="status"></div>
+
+<p>受信進捗</p>
+<progress id="clientProgress" value="0" max="100"></progress>
+
 <a id="download" style="display:none;">Download</a>
 
 <script>
-  const peer = new Peer({ debug:2 });
-  let conn;
+const peer = new Peer({ debug: 2 });
+let conn;
 
-  join.onclick = () => {
-    const id = session.value;
-    if (!id) return alert("SessionIDなし");
+let incoming = {
+  name: "",
+  mime: "",
+  size: 0,
+  received: 0,
+  chunks: []
+};
 
-    conn = peer.connect(id);
+document.getElementById("join").onclick = () => {
+  const id = document.getElementById("session").value.trim();
+  if (!id) return alert("IDなし");
 
-    conn.on("open", () => {
-      status.textContent = "接続完了";
-    });
+  conn = peer.connect(id);
 
-    conn.on("data", file => {
-      console.log("受信:", file);
+  conn.on("open", () => {
+    document.getElementById("status").textContent = "接続完了";
+  });
 
-      const blob = new Blob([file.data], { type: file.type });
+  conn.on("data", msg => {
+    const bar = document.getElementById("clientProgress");
+
+    if (msg.type === "meta") {
+      incoming.name = msg.name;
+      incoming.mime = msg.mime;
+      incoming.size = msg.size;
+      incoming.received = 0;
+      incoming.chunks = [];
+      bar.value = 0;
+
+      document.getElementById("status").textContent = "受信開始: " + incoming.name;
+    }
+
+    else if (msg.type === "chunk") {
+      incoming.chunks.push(msg.data);
+      incoming.received += msg.data.length;
+
+      const percent = (incoming.received / incoming.size) * 100;
+      bar.value = percent;
+    }
+
+    else if (msg.type === "progress") {
+      bar.value = msg.percent;
+    }
+
+    else if (msg.type === "end") {
+      bar.value = 100;
+
+      const blob = new Blob(incoming.chunks, { type: incoming.mime });
       const url = URL.createObjectURL(blob);
 
       const dl = document.getElementById("download");
       dl.href = url;
-      dl.download = file.name;
-      dl.textContent = file.name + " をダウンロード";
+      dl.download = incoming.name;
+      dl.textContent = incoming.name + " をダウンロード";
       dl.style.display = "block";
-    });
-  };
+
+      document.getElementById("status").textContent = "受信完了: " + incoming.name;
+    }
+  });
+
+  conn.on("error", err => {
+    console.error(err);
+    document.getElementById("status").textContent = "接続エラー";
+  });
+};
 </script>
 
 </body>
