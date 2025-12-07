@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FileBeam Host</title>
+
+  <!-- PeerJS -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    #qr {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h2>FileBeam Host</h2>
+  <input type="text" id="id" placeholder="任意のIDを入力" />
+  <button id="ok">準備</button>
+
+  <h3>ファイル送信</h3>
+  <input type="file" id="fileInput" disabled />
+
+  <script>
+    let peer;
+    let conn;
+    const idInput = document.getElementById("id");
+    const fileInput = document.getElementById("fileInput");
+    const okBtn = document.getElementById("ok");
+
+    okBtn.addEventListener("click", () => {
+      if (peer) {
+        peer.destroy();
+        peer = null;
+      }
+      const id = idInput.value.trim();
+      if (!id) {
+        alert("IDを入力してください");
+        return;
+      }
+
+      peer = new Peer(id);
+
+      peer.on("open", (myId) => {
+        console.log("SessionID:", myId);
+
+        fileInput.disabled = false;
+      });
+
+      peer.on("connection", (connection) => {
+        conn = connection;
+        console.log("Client connected:", conn.peer);
+
+        conn.on("open", () => {
+          console.log("Connection opened");
+
+          fileInput.onchange = () => {
+            if (!fileInput.files[0]) return;
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = () => {
+              const arrayBuffer = reader.result;
+
+              // ArrayBufferはそのまま送信できないこともあるため、
+              // Uint8Arrayに変換してから送るほうが確実です
+              const uint8Array = new Uint8Array(arrayBuffer);
+
+              // データを分割して送る場合はここで工夫が必要ですが、
+              // まずはファイル情報とUint8Array全体を送る例です
+              conn.send({
+                name: file.name,
+                type: file.type,
+                data: uint8Array,
+              });
+
+              console.log("送信:", file.name);
+            };
+
+            reader.readAsArrayBuffer(file);
+          };
+        });
+
+        conn.on("error", (err) => {
+          console.error("Connection error:", err);
+        });
+      });
+
+      peer.on("error", (err) => {
+        console.error("Peer error:", err);
+        alert("エラーが発生しました: " + err);
+      });
+    });
+  </script>
+</body>
+</html>

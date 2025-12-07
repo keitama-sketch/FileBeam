@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FileBeam Client</title>
+
+  <!-- PeerJS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+<h2>FileBeam Client</h2>
+
+<input id="session" placeholder="SessionID">
+<button id="join">Connect</button>
+
+<div id="status"></div>
+<a id="download" style="display:none;">Download</a>
+
+<script>
+  const peer = new Peer({ debug:2 });
+  let conn;
+
+  join.onclick = () => {
+    const id = session.value;
+    if (!id) return alert("SessionIDなし");
+
+    conn = peer.connect(id);
+
+    conn.on("open", () => {
+      status.textContent = "接続完了";
+    });
+
+    conn.on("data", file => {
+      console.log("受信:", file);
+
+      const blob = new Blob([file.data], { type: file.type });
+      const url = URL.createObjectURL(blob);
+
+      const dl = document.getElementById("download");
+      dl.href = url;
+      dl.download = file.name;
+      dl.textContent = file.name + " をダウンロード";
+      dl.style.display = "block";
+    });
+  };
+</script>
+
+</body>
+</html>
