@@ -3,99 +3,103 @@
 <head>
   <meta charset="utf-8" />
   <title>FileBeam Host</title>
-
-  <!-- PeerJS -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 
   <style>
-    body {
-      font-family: sans-serif;
-      padding: 20px;
-    }
-    #qr {
-      margin-top: 20px;
-    }
+    body { font-family: sans-serif; padding: 20px; }
+    progress { width: 300px; height: 20px; }
+    #status { margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h2>FileBeam Host</h2>
-  <input type="text" id="id" placeholder="任意のIDを入力" />
-  <button id="ok">準備</button>
 
-  <h3>ファイル送信</h3>
-  <input type="file" id="fileInput" disabled />
+<h2>FileBeam Host</h2>
 
-  <script>
-    let peer;
-    let conn;
-    const idInput = document.getElementById("id");
-    const fileInput = document.getElementById("fileInput");
-    const okBtn = document.getElementById("ok");
+<input type="text" id="id" placeholder="任意のID">
+<button id="start">準備</button>
 
-    okBtn.addEventListener("click", () => {
-      if (peer) {
-        peer.destroy();
-        peer = null;
-      }
-      const id = idInput.value.trim();
-      if (!id) {
-        alert("IDを入力してください");
-        return;
-      }
+<div id="status"></div>
 
-      peer = new Peer(id);
+<h3>ファイル送信</h3>
+<input type="file" id="fileInput" disabled>
 
-      peer.on("open", (myId) => {
-        console.log("SessionID:", myId);
+<p>送信進捗</p>
+<progress id="hostProgress" value="0" max="100"></progress>
 
-        fileInput.disabled = false;
-      });
+<script>
+let peer;
+let conn;
 
-      peer.on("connection", (connection) => {
-        conn = connection;
-        console.log("Client connected:", conn.peer);
+const CHUNK_SIZE = 64 * 1024; // 64KB
 
-        conn.on("open", () => {
-          console.log("Connection opened");
+document.getElementById("start").onclick = () => {
+  const id = document.getElementById("id").value.trim();
+  if (!id) return alert("IDを入力して");
 
-          fileInput.onchange = () => {
-            if (!fileInput.files[0]) return;
+  if (peer) peer.destroy();
+  peer = new Peer(id);
 
-            const file = fileInput.files[0];
-            const reader = new FileReader();
+  peer.on("open", myId => {
+    document.getElementById("status").textContent = "SessionID: " + myId;
+    document.getElementById("fileInput").disabled = false;
+  });
 
-            reader.onload = () => {
-              const arrayBuffer = reader.result;
+  peer.on("connection", c => {
+    conn = c;
+    document.getElementById("status").textContent = "接続: " + conn.peer;
 
-              // ArrayBufferはそのまま送信できないこともあるため、
-              // Uint8Arrayに変換してから送るほうが確実です
-              const uint8Array = new Uint8Array(arrayBuffer);
+    conn.on("error", e => console.error(e));
 
-              // データを分割して送る場合はここで工夫が必要ですが、
-              // まずはファイル情報とUint8Array全体を送る例です
-              conn.send({
-                name: file.name,
-                type: file.type,
-                data: uint8Array,
-              });
+    document.getElementById("fileInput").onchange = () => {
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
 
-              console.log("送信:", file.name);
-            };
+      const reader = new FileReader();
+      reader.onload = () => {
+        const buffer = reader.result;
+        const uint8 = new Uint8Array(buffer);
 
-            reader.readAsArrayBuffer(file);
-          };
+        conn.send({
+          type: "meta",
+          name: file.name,
+          mime: file.type,
+          size: uint8.length
         });
 
-        conn.on("error", (err) => {
-          console.error("Connection error:", err);
-        });
-      });
+        let offset = 0;
+        const bar = document.getElementById("hostProgress");
 
-      peer.on("error", (err) => {
-        console.error("Peer error:", err);
-        alert("エラーが発生しました: " + err);
-      });
-    });
-  </script>
+        function sendChunk() {
+          const end = Math.min(offset + CHUNK_SIZE, uint8.length);
+          const chunk = uint8.slice(offset, end);
+
+          conn.send({ type: "chunk", data: chunk });
+
+          offset = end;
+          const percent = (offset / uint8.length) * 100;
+          bar.value = percent;
+
+          conn.send({ type: "progress", percent });
+
+          if (offset < uint8.length) {
+            setTimeout(sendChunk, 0);
+          } else {
+            conn.send({ type: "end" });
+            bar.value = 100;
+            document.getElementById("status").textContent = "送信完了: " + file.name;
+          }
+        }
+
+        sendChunk();
+      };
+
+      reader.readAsArrayBuffer(file);
+    };
+  });
+
+  peer.on("error", err => alert("PeerJS エラー: " + err));
+};
+</script>
+
 </body>
 </html>
