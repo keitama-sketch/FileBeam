@@ -1,50 +1,100 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FileBeam Client</title>
-
-  <!-- PeerJS CDN -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    /* CSSは送信側とほぼ共通 */
+    body { font-family: system-ui; line-height: 1.6; max-width: 500px; margin: 0 auto; padding: 20px; background: #f4f7f9; }
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    input, button { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+    button { background: #28a745; color: white; border: none; cursor: pointer; font-weight: bold; }
+    progress { width: 100%; height: 20px; margin-top: 10px; }
+    .status { font-size: 0.9em; color: #666; margin-bottom: 10px; }
+    #download-link { display: none; margin-top: 15px; padding: 10px; background: #fff3cd; text-align: center; border-radius: 6px; text-decoration: none; color: #856404; font-weight: bold; border: 1px solid #ffeeba; }
+  </style>
 </head>
 <body>
 
-<h2>FileBeam Client</h2>
+<div class="card">
+  <h2>📥 FileBeam Client</h2>
+  <div class="status" id="status">接続先のIDを入力してください</div>
+  
+  <input type="text" id="target-id" placeholder="HostのIDを入力">
+  <button id="connect-btn">接続する</button>
 
-<input id="session" placeholder="SessionID">
-<button id="join">Connect</button>
+  <hr>
 
-<div id="status"></div>
-<a id="download" style="display:none;">Download</a>
+  <div id="receive-area">
+    <p id="file-label">待機中...</p>
+    <progress id="progress-bar" value="0" max="100"></progress>
+    <div id="percent">0%</div>
+    <a id="download-link">ファイルを保存する</a>
+  </div>
+</div>
 
 <script>
-  const peer = new Peer({ debug:2 });
-  let conn;
+  const peer = new Peer({ debug: 1 });
+  let receivedChunks = [];
+  let fileMeta = null;
+  let bytesReceived = 0;
 
-  join.onclick = () => {
-    const id = session.value;
-    if (!id) return alert("SessionIDなし");
+  const statusEl = document.getElementById('status');
+  const connectBtn = document.getElementById('connect-btn');
+  const progressBar = document.getElementById('progress-bar');
+  const percentEl = document.getElementById('percent');
+  const downloadLink = document.getElementById('download-link');
+  const fileLabel = document.getElementById('file-label');
 
-    conn = peer.connect(id);
+  connectBtn.onclick = () => {
+    const id = document.getElementById('target-id').value.trim();
+    if (!id) return alert("IDを入力してください");
 
-    conn.on("open", () => {
-      status.textContent = "接続完了";
+    const conn = peer.connect(id, { reliable: true });
+
+    conn.on('open', () => {
+      statusEl.innerText = "接続成功！ファイル送信を待っています...";
+      connectBtn.disabled = true;
     });
 
-    conn.on("data", file => {
-      console.log("受信:", file);
+    conn.on('data', (data) => {
+      if (data.type === 'START') {
+        // 受信リセット
+        fileMeta = data;
+        receivedChunks = [];
+        bytesReceived = 0;
+        downloadLink.style.display = 'none';
+        fileLabel.innerText = `受信中: ${data.name}`;
+      } 
+      
+      else if (data.type === 'CHUNK') {
+        receivedChunks.push(data.data);
+        bytesReceived += data.data.byteLength;
+        
+        const progress = Math.floor((bytesReceived / fileMeta.size) * 100);
+        progressBar.value = progress;
+        percentEl.innerText = `${progress}% (${(bytesReceived/1024/1024).toFixed(2)} MB)`;
+      } 
+      
+      else if (data.type === 'END') {
+        const blob = new Blob(receivedChunks, { type: fileMeta.mime });
+        const url = URL.createObjectURL(blob);
+        
+        downloadLink.href = url;
+        downloadLink.download = fileMeta.name;
+        downloadLink.style.display = 'block';
+        downloadLink.innerText = `✅ ${fileMeta.name} を保存`;
+        statusEl.innerText = "受信完了！";
+      }
+    });
 
-      const blob = new Blob([file.data], { type: file.type });
-      const url = URL.createObjectURL(blob);
-
-      const dl = document.getElementById("download");
-      dl.href = url;
-      dl.download = file.name;
-      dl.textContent = file.name + " をダウンロード";
-      dl.style.display = "block";
+    conn.on('close', () => {
+      statusEl.innerText = "切断されました。";
+      connectBtn.disabled = false;
     });
   };
 </script>
-
 </body>
 </html>
