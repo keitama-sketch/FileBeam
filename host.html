@@ -1,101 +1,126 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FileBeam Host</title>
-
-  <!-- PeerJS -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
-
   <style>
-    body {
-      font-family: sans-serif;
-      padding: 20px;
-    }
-    #qr {
-      margin-top: 20px;
-    }
+    body { font-family: system-ui; line-height: 1.6; max-width: 500px; margin: 0 auto; padding: 20px; background: #f4f7f9; }
+    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    input, button { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+    button { background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
+    button:disabled { background: #ccc; }
+    progress { width: 100%; height: 20px; margin-top: 10px; }
+    .status { font-size: 0.9em; color: #666; margin-bottom: 10px; }
+    .badge { background: #e1f5fe; color: #01579b; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <h2>FileBeam Host</h2>
-  <input type="text" id="id" placeholder="任意のIDを入力" />
-  <button id="ok">準備</button>
 
-  <h3>ファイル送信</h3>
-  <input type="file" id="fileInput" disabled />
+<div class="card">
+  <h2>📤 FileBeam Host</h2>
+  <div class="status" id="status">IDを設定して「準備」を押してください</div>
+  
+  <input type="text" id="peer-id" placeholder="任意のID (例: my-secret-room)">
+  <button id="start-btn">準備完了</button>
 
-  <script>
-    let peer;
-    let conn;
-    const idInput = document.getElementById("id");
-    const fileInput = document.getElementById("fileInput");
-    const okBtn = document.getElementById("ok");
+  <hr>
 
-    okBtn.addEventListener("click", () => {
-      if (peer) {
-        peer.destroy();
-        peer = null;
-      }
-      const id = idInput.value.trim();
-      if (!id) {
-        alert("IDを入力してください");
+  <div id="transfer-area" style="display:none;">
+    <h3>ファイルを選択</h3>
+    <input type="file" id="file-input">
+    <p id="file-info"></p>
+    <progress id="progress-bar" value="0" max="100"></progress>
+    <div id="percent">0%</div>
+  </div>
+</div>
+
+<script>
+  const CHUNK_SIZE = 16384; // 16KB (安定性のためのサイズ)
+  let peer = null;
+  let activeConn = null;
+
+  const statusEl = document.getElementById('status');
+  const startBtn = document.getElementById('start-btn');
+  const fileInput = document.getElementById('file-input');
+  const progressBar = document.getElementById('progress-bar');
+  const percentEl = document.getElementById('percent');
+
+  startBtn.onclick = () => {
+    const id = document.getElementById('peer-id').value.trim();
+    if (!id) return alert("IDを入力してください");
+
+    peer = new Peer(id, { debug: 1 });
+
+    peer.on('open', (id) => {
+      statusEl.innerHTML = `待機中... ID: <span class="badge">${id}</span>`;
+      startBtn.disabled = true;
+      document.getElementById('transfer-area').style.display = 'block';
+    });
+
+    peer.on('connection', (conn) => {
+      activeConn = conn;
+      statusEl.innerText = `接続済み: ${conn.peer}`;
+      
+      conn.on('close', () => {
+        statusEl.innerText = "接続が切れました。再接続を待っています...";
+        activeConn = null;
+      });
+    });
+
+    peer.on('error', (err) => {
+      alert("エラー: " + err.type);
+      console.error(err);
+    });
+  };
+
+  fileInput.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !activeConn) return;
+
+    // 1. メタデータを送信
+    activeConn.send({
+      type: 'START',
+      name: file.name,
+      size: file.size,
+      mime: file.type
+    });
+
+    let offset = 0;
+    
+    // 2. チャンク送信関数
+    const readAndSend = () => {
+      if (offset >= file.size) {
+        activeConn.send({ type: 'END' });
+        statusEl.innerText = "送信完了！";
         return;
       }
 
-      peer = new Peer(id);
+      const slice = file.slice(offset, offset + CHUNK_SIZE);
+      const reader = new FileReader();
 
-      peer.on("open", (myId) => {
-        console.log("SessionID:", myId);
-
-        fileInput.disabled = false;
-      });
-
-      peer.on("connection", (connection) => {
-        conn = connection;
-        console.log("Client connected:", conn.peer);
-
-        conn.on("open", () => {
-          console.log("Connection opened");
-
-          fileInput.onchange = () => {
-            if (!fileInput.files[0]) return;
-
-            const file = fileInput.files[0];
-            const reader = new FileReader();
-
-            reader.onload = () => {
-              const arrayBuffer = reader.result;
-
-              // ArrayBufferはそのまま送信できないこともあるため、
-              // Uint8Arrayに変換してから送るほうが確実です
-              const uint8Array = new Uint8Array(arrayBuffer);
-
-              // データを分割して送る場合はここで工夫が必要ですが、
-              // まずはファイル情報とUint8Array全体を送る例です
-              conn.send({
-                name: file.name,
-                type: file.type,
-                data: uint8Array,
-              });
-
-              console.log("送信:", file.name);
-            };
-
-            reader.readAsArrayBuffer(file);
-          };
+      reader.onload = (event) => {
+        activeConn.send({
+          type: 'CHUNK',
+          data: event.target.result
         });
+        offset += event.target.result.byteLength;
+        
+        // 進捗更新
+        const progress = Math.floor((offset / file.size) * 100);
+        progressBar.value = progress;
+        percentEl.innerText = `${progress}% (${(offset/1024/1024).toFixed(2)} MB)`;
 
-        conn.on("error", (err) => {
-          console.error("Connection error:", err);
-        });
-      });
+        // ブラウザのフリーズを防ぐため少し猶予を持たせる
+        setTimeout(readAndSend, 0);
+      };
+      reader.readAsArrayBuffer(slice);
+    };
 
-      peer.on("error", (err) => {
-        console.error("Peer error:", err);
-        alert("エラーが発生しました: " + err);
-      });
-    });
-  </script>
+    statusEl.innerText = "送信中...";
+    readAndSend();
+  };
+</script>
 </body>
 </html>
