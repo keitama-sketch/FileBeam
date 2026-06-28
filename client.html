@@ -6,7 +6,6 @@
   <title>FileBeam Client</title>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
-    /* CSSは送信側とほぼ共通 */
     body { font-family: system-ui; line-height: 1.6; max-width: 500px; margin: 0 auto; padding: 20px; background: #f4f7f9; }
     .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     input, button { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
@@ -47,11 +46,15 @@
   const percentEl = document.getElementById('percent');
   const downloadLink = document.getElementById('download-link');
   const fileLabel = document.getElementById('file-label');
+  const targetIdInput = document.getElementById('target-id');
 
-  connectBtn.onclick = () => {
-    const id = document.getElementById('target-id').value.trim();
+  // 接続処理を関数として共通化
+  function connectToHost(id) {
     if (!id) return alert("IDを入力してください");
 
+    targetIdInput.value = id; // 入力欄を更新
+    statusEl.innerText = "接続を試みています...";
+    
     const conn = peer.connect(id, { reliable: true });
 
     conn.on('open', () => {
@@ -61,7 +64,6 @@
 
     conn.on('data', (data) => {
       if (data.type === 'START') {
-        // 受信リセット
         fileMeta = data;
         receivedChunks = [];
         bytesReceived = 0;
@@ -94,7 +96,22 @@
       statusEl.innerText = "切断されました。";
       connectBtn.disabled = false;
     });
+  }
+
+  // ボタンクリック時の挙動
+  connectBtn.onclick = () => {
+    const id = targetIdInput.value.trim();
+    connectToHost(id);
   };
+
+  // 【新規追加】URLパラメータに「id」があれば自動接続を開始
+  peer.on('open', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const idParam = urlParams.get('id');
+    if (idParam) {
+      connectToHost(idParam.trim());
+    }
+  });
 </script>
 </body>
 </html>
